@@ -2,6 +2,8 @@
 #include <unistd.h>
 #include<stdlib.h>
 #include<string.h>
+#include<sys/types.h>
+#include<sys/wait.h>
 
 #define MAX_LINE 80 /* The maximum length command */
 
@@ -10,7 +12,7 @@
 
 
 
-int parse_args(char * args[]){
+int parse_args(char * args[], int * background_ptr){
 
 
     char * line =  (char * ) malloc(0);
@@ -20,14 +22,22 @@ int parse_args(char * args[]){
 
     char delim[] = " ";
     char * saveptr = NULL;
-    char * token = strtok_r(line, delim, &saveptr);
+    char * token = strtok_r(line, " ", &saveptr);
 
     int i = 0;
     while(token != NULL){
         args[i++] = token;
-        token = strtok_r(NULL, delim, &saveptr);
+        token = strtok_r(NULL, " ", &saveptr);
     }
 
+
+    // // terminate  args with a NULL
+    if(i>0 && !strcmp(args[i-1], "&")){
+        *background_ptr = 1;
+        args[i-1] = NULL;
+        return i-1;
+    }
+    args[i] = NULL;
     return i;
 }
 
@@ -41,9 +51,35 @@ int should_run = 1; /* flag to determine when to exit program */
     while (should_run) {
         printf("osh>");
         fflush(stdout);
-    
+
+        // run child in background?
+        int background = 0;
+
+        //command arg parsing
+        int argcount = parse_args(args, & background);
         
-        int argcount = parse_args(args);
+
+        if(argcount  > 0){
+            // fork a  child process
+            int pid  = fork();
+
+            if(pid == 0){
+                // child
+                // execute the command
+                execvp(args[0], args);
+            }else if(pid > 0){
+                //parent
+
+                //wait for the child?
+                if(background == 0) wait(NULL);
+
+            }else{
+                printf("Error in forking child");
+                return -1;
+            }
+        }
+        
+
 
 
         // should_run = 0;
