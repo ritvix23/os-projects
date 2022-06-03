@@ -10,15 +10,8 @@
 
 
 
+int parse_args_from_string(char * line, char * args[], int * background_ptr){
 
-
-int parse_args(char * args[], int * background_ptr){
-
-
-    char * line =  (char * ) malloc(0);
-    size_t buf_size = 0;
-    size_t line_size  =  getline(&line, &buf_size, stdin);
-    line[line_size - 1] = '\0';
 
     char delim[] = " ";
     char * saveptr = NULL;
@@ -42,11 +35,62 @@ int parse_args(char * args[], int * background_ptr){
 }
 
 
+char * get_string_stdin(char * line, size_t * buf_size_ptr){
+    
+    size_t line_size  =  getline(&line, buf_size_ptr, stdin);
+    line[line_size - 1] = '\0';
+    return line;
+
+}
+
+
+int prev_line_ptr(int line_ptr){
+    return abs(1 - line_ptr); 
+}
+
+
+char * copy(char * str){
+    size_t size = sizeof(str)/sizeof(char);
+    char * temp = (char *)malloc(size * sizeof(char));
+
+    memcpy(temp, str, sizeof(str));
+    return temp;
+}
+
+
+int execute(char * args[], int background)
+{
+    int pid  = fork();
+
+    if(pid == 0){
+        // child
+        // execute the command
+        execvp(args[0], args);
+    }else if(pid > 0){
+        //parent
+
+        //wait for the child?
+        if(background == 0) wait(NULL);
+
+    }else{
+        printf("Error in forking child");
+        return -1;
+    }
+    return 0;
+}
 int main(void)
 {
-char* args[MAX_LINE/2 + 1]; /* command line arguments */
+
+char* args[MAX_LINE/2 + 1], prev_args[MAX_LINE/2 + 1]; /* command line arguments */
+char * lines[3] = {(char *) malloc(0), (char *) malloc(0), NULL} ;
+const int LINE_BUFFER_INDEX = 2;
+size_t buf_sizes[2] = {0, 0};
+int line_ptr = 0;
+
 
 int should_run = 1; /* flag to determine when to exit program */
+int read_stdin = 1;
+int spawn_child  = 1;
 
     while (should_run) {
         printf("osh>");
@@ -54,48 +98,38 @@ int should_run = 1; /* flag to determine when to exit program */
 
         // run child in background?
         int background = 0;
-
+ 
         //command arg parsing
-        int argcount = parse_args(args, & background);
         
-
-        // exit feature
-        if(strcmp(args[0], "exit") == 0){
-            should_run = 0;
-            continue;
+        if(read_stdin) lines[line_ptr] = get_string_stdin(lines[line_ptr], &buf_sizes[line_ptr]);
+        else {
+            read_stdin = 1;
+            printf("%s\n", lines[line_ptr]);
         }
 
-        //spawn a child to execute the given command
-        if(argcount  > 0){
-            // fork a  child process
-            int pid  = fork();
+        lines[LINE_BUFFER_INDEX] =  copy(lines[line_ptr]);
+        
+        int argcount = parse_args_from_string(lines[LINE_BUFFER_INDEX], args, &background);
 
-            if(pid == 0){
-                // child
-                // execute the command
-                execvp(args[0], args);
-            }else if(pid > 0){
-                //parent
 
-                //wait for the child?
-                if(background == 0) wait(NULL);
-
+        if(argcount > 0){
+            if(strcmp(args[0], "exit") == 0){
+                should_run = 0;
+            }else if(strcmp(args[0], "!!") == 0){
+                if(buf_sizes[prev_line_ptr(line_ptr)] != 0){
+                    read_stdin = 0;
+                    line_ptr = prev_line_ptr(line_ptr);
+                }else{
+                    printf("%s", "No command found in history\n");
+                }
             }else{
-                printf("Error in forking child");
-                return -1;
+                int retcode  = execute(args, background);
+                if(retcode == -1) return -1;
+                line_ptr = prev_line_ptr(line_ptr);
             }
         }
-        
 
-
-
-        // should_run = 0;
-        /**
-        * After reading user input, the steps are:
-        * (1) fork a child process using fork()
-        * (2) the child process will invoke execvp()
-        * (3) parent will invoke wait() unless command included &
-        */
+        free(lines[LINE_BUFFER_INDEX]);
     }
     return 0;
 }
