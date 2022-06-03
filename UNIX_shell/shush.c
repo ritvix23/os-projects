@@ -59,6 +59,13 @@ int should_run = 1; /* flag to determine when to exit program */
         int argcount = parse_args(args, & background);
         
 
+        // exit feature
+        if(strcmp(args[0], "exit") == 0){
+            should_run = 0;
+            continue;
+        }
+
+        //spawn a child to execute the given command
         if(argcount  > 0){
             // fork a  child process
             int pid  = fork();
