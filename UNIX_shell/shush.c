@@ -29,7 +29,6 @@ const int FILE_PTR = 1, ARGCOUNT = 0;
 
 int parseArgsFromString(char * line, char * args[]){
 
-
     char delim[] = " ";
     char * saveptr = NULL;
     char * token = strtok_r(line, " ", &saveptr);
@@ -73,9 +72,6 @@ char * copy(char * str, size_t buf_size){
 void argProcessing(char * args[], int switches[], void *extras[]){
 
 
-    // todo : filename must end with null char
-    // what happens if nothing is supplied after redirection operator that is file name is missing - make file name ptr to be null.
-
     int argcount  = *((int *)extras[ARGCOUNT]);
 
     //switch to run child in background
@@ -93,9 +89,17 @@ void argProcessing(char * args[], int switches[], void *extras[]){
             switches[REDIRECTION_FLOW] = (strcmp(args[i], ">")==0? PROGRAM_TO_FILE : FILE_TO_PROGRAM); // redirection flow is program to file or file to program
             args[i] = NULL;
             extras[FILE_PTR] = args[i+1];
-            argcount  = i;
+            // argcount  = i;
+
+            for(int j = i; j+2<=argcount; j++){
+            args[j] = args[j+2];
+            }
+            argcount -= 2;
+
         }
+        
     }
+    
 
     *((int *)extras[ARGCOUNT]) = argcount;
     
@@ -141,7 +145,7 @@ int execute(char * args[], int switches[], void * extras[])
     }else if(pid > 0){
         //parent
 
-        //wait for the child?
+        //wait for the child to finish
         if(background == 0) wait(NULL);
 
     }else{
