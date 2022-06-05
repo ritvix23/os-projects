@@ -4,13 +4,30 @@
 #include<string.h>
 #include<sys/types.h>
 #include<sys/wait.h>
+#include<sys/shm.h>
+#include<fcntl.h>
+#include<sys/stat.h>
+#include<sys/mman.h>
+
 
 #define MAX_LINE 80 /* The maximum length command */
 
+// indexes for switches -
+const int BACKGROUND = 0, REDIRECTION = 1, REDIRECTION_FLOW = 2;
+
+// indexes for loop_flags
+const int READ_STDIN = 0, SHOULD_RUN = 1;
+
+//values for switches[REDIRECTION_FLOW] - 
+const int FILE_TO_PROGRAM = 0, PROGRAM_TO_FILE = 1;
+
+//indexes for extras - 
+const int FILE_PTR = 1, ARGCOUNT = 0;
 
 
 
-int parse_args_from_string(char * line, char * args[], int * background_ptr){
+
+int parseArgsFromString(char * line, char * args[]){
 
 
     char delim[] = " ";
@@ -23,19 +40,12 @@ int parse_args_from_string(char * line, char * args[], int * background_ptr){
         token = strtok_r(NULL, " ", &saveptr);
     }
 
-
-    // // terminate  args with a NULL
-    if(i>0 && !strcmp(args[i-1], "&")){
-        *background_ptr = 1;
-        args[i-1] = NULL;
-        return i-1;
-    }
     args[i] = NULL;
     return i;
 }
 
 
-char * get_string_stdin(char * line, size_t * buf_size_ptr){
+char * getStringStdin(char * line, size_t * buf_size_ptr){
     
     size_t line_size  =  getline(&line, buf_size_ptr, stdin);
     line[line_size - 1] = '\0';
@@ -44,27 +54,89 @@ char * get_string_stdin(char * line, size_t * buf_size_ptr){
 }
 
 
-int prev_line_ptr(int line_ptr){
+int getPrevLinePtr(int line_ptr){
     return abs(1 - line_ptr); 
 }
 
 
-char * copy(char * str){
-    size_t size = sizeof(str)/sizeof(char);
-    char * temp = (char *)malloc(size * sizeof(char));
+char * copy(char * str, size_t buf_size){
+    char * temp = (char *)malloc(buf_size);
 
-    memcpy(temp, str, sizeof(str));
+    memcpy(temp, str, buf_size);
     return temp;
 }
 
 
-int execute(char * args[], int background)
+
+
+
+void argProcessing(char * args[], int switches[], void *extras[]){
+
+
+    // todo : filename must end with null char
+    // what happens if nothing is supplied after redirection operator that is file name is missing - make file name ptr to be null.
+
+    int argcount  = *((int *)extras[ARGCOUNT]);
+
+    //switch to run child in background
+    switches[BACKGROUND] = 0;
+    if(strcmp(args[argcount - 1], "&") == 0){
+        switches[BACKGROUND] = 1;
+        args[argcount - 1] = NULL;
+        argcount--;
+    }
+
+    switches[REDIRECTION] = 0;
+    for(int i = 0; i<argcount; i++){
+        if(strcmp(args[i], ">")==0 || strcmp(args[i], "<") == 0){
+            switches[REDIRECTION] = 1;
+            switches[REDIRECTION_FLOW] = (strcmp(args[i], ">")==0? PROGRAM_TO_FILE : FILE_TO_PROGRAM); // redirection flow is program to file or file to program
+            args[i] = NULL;
+            extras[FILE_PTR] = args[i+1];
+            argcount  = i;
+        }
+    }
+
+    *((int *)extras[ARGCOUNT]) = argcount;
+    
+}
+
+
+int execute(char * args[], int switches[], void * extras[])
 {
+    int background = switches[BACKGROUND], redirection = switches[REDIRECTION], redirection_flow = switches[REDIRECTION_FLOW];
     int pid  = fork();
 
     if(pid == 0){
         // child
         // execute the command
+
+        if(redirection){
+            char * file_name = extras[FILE_PTR];
+
+            // if the file name is left empty
+            if( file_name == NULL){
+                printf("%s", "Error : Syntax error\n");
+                return -1;
+            }
+
+            if(redirection_flow == FILE_TO_PROGRAM){
+                int fd = open(file_name, O_RDONLY);
+                if(fd == -1) {
+                    printf("Error while opening the file : %s", file_name);
+                    return -1;
+                }
+                dup2(fd, STDIN_FILENO);
+            }else{
+                int fd = open(file_name, O_CREAT | O_WRONLY | O_TRUNC);
+                if( fd == -1){
+                    printf("Error while opening the file : %s", file_name);
+                    return -1;
+                }
+                dup2(fd, STDOUT_FILENO);
+            }
+        }
+
         execvp(args[0], args);
     }else if(pid > 0){
         //parent
@@ -78,54 +150,68 @@ int execute(char * args[], int background)
     }
     return 0;
 }
+
+
 int main(void)
 {
 
-char* args[MAX_LINE/2 + 1], prev_args[MAX_LINE/2 + 1]; /* command line arguments */
+char* args[MAX_LINE/2 + 1];/* command line arguments */
 char * lines[3] = {(char *) malloc(0), (char *) malloc(0), NULL} ;
 const int LINE_BUFFER_INDEX = 2;
 size_t buf_sizes[2] = {0, 0};
 int line_ptr = 0;
 
+void *extras[2] = {NULL, NULL}; 
 
-int should_run = 1; /* flag to determine when to exit program */
-int read_stdin = 1;
-int spawn_child  = 1;
 
-    while (should_run) {
-        printf("osh>");
+
+int * argcntptr  = (int *)malloc(sizeof(int));
+extras[ARGCOUNT] = argcntptr;
+
+int switches[3] = {0, 0, 0};
+int loop_flags[2] = {0, 0};
+
+loop_flags[READ_STDIN] = 1;
+loop_flags[SHOULD_RUN] = 1;
+
+    while (loop_flags[SHOULD_RUN]) {
+        
+
+
+        printf("shush> ");
         fflush(stdout);
 
-        // run child in background?
-        int background = 0;
  
         //command arg parsing
         
-        if(read_stdin) lines[line_ptr] = get_string_stdin(lines[line_ptr], &buf_sizes[line_ptr]);
+        if(loop_flags[READ_STDIN] == 1) lines[line_ptr] = getStringStdin(lines[line_ptr], &buf_sizes[line_ptr]);
         else {
-            read_stdin = 1;
+            loop_flags[READ_STDIN] = 1;
             printf("%s\n", lines[line_ptr]);
         }
 
-        lines[LINE_BUFFER_INDEX] =  copy(lines[line_ptr]);
+        lines[LINE_BUFFER_INDEX] =  copy(lines[line_ptr], buf_sizes[line_ptr]);
         
-        int argcount = parse_args_from_string(lines[LINE_BUFFER_INDEX], args, &background);
+        *((int  *) extras[ARGCOUNT]) = parseArgsFromString(lines[LINE_BUFFER_INDEX], args);
+        
+        argProcessing(args, switches, extras);
 
+        int argcount = *((int *)extras[ARGCOUNT]);
 
         if(argcount > 0){
             if(strcmp(args[0], "exit") == 0){
-                should_run = 0;
+                loop_flags[SHOULD_RUN]= 0;
             }else if(strcmp(args[0], "!!") == 0){
-                if(buf_sizes[prev_line_ptr(line_ptr)] != 0){
-                    read_stdin = 0;
-                    line_ptr = prev_line_ptr(line_ptr);
+                if(buf_sizes[getPrevLinePtr(line_ptr)] != 0){
+                    loop_flags[READ_STDIN] = 0;
+                    line_ptr = getPrevLinePtr(line_ptr);
                 }else{
                     printf("%s", "No command found in history\n");
                 }
             }else{
-                int retcode  = execute(args, background);
+                int retcode  = execute(args, switches, extras);
                 if(retcode == -1) return -1;
-                line_ptr = prev_line_ptr(line_ptr);
+                line_ptr = getPrevLinePtr(line_ptr);
             }
         }
 
