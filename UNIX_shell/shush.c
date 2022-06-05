@@ -11,6 +11,9 @@
 
 
 #define MAX_LINE 80 /* The maximum length command */
+#define READ_END 0
+#define WRITE_END 1
+#define DEBUG 0
 
 // indexes for switches -
 const int BACKGROUND = 0, REDIRECTION = 1, REDIRECTION_FLOW = 2;
@@ -92,19 +95,84 @@ void argProcessing(char * args[], int switches[], void *extras[]){
             // argcount  = i;
 
             for(int j = i; j+2<=argcount; j++){
-            args[j] = args[j+2];
+                args[j] = args[j+2];
             }
             argcount -= 2;
 
         }
-        
     }
-    
 
     *((int *)extras[ARGCOUNT]) = argcount;
     
 }
 
+
+
+int recursiveExec(char * args[]){
+
+
+    if(DEBUG == 1) printf("%s", "entered recursive\n");
+    int argcount  = 0;
+    while(args[argcount] != NULL){
+        argcount++;
+    }
+
+    if(DEBUG == 1) printf("argcount is %d\n", argcount);
+
+    int pipe_index = -1;
+    for(int i = 0; i<argcount; i++){
+        if(strcmp(args[i], "|") == 0){
+            pipe_index = i;
+        }
+    }
+
+    char ** args_parent = args + pipe_index + 1;
+    char ** args_child = args;
+
+    if(DEBUG == 1)printf("pipe index is %d\n", pipe_index);
+
+
+    if(pipe_index != -1){
+        args[pipe_index] = NULL;
+
+        int fd[2];
+
+
+        if(pipe(fd) == -1){
+            printf("%s", "Pipe creation failed");
+            return -1;
+        }
+
+        int pid = fork();
+
+        if(pid == 0){
+            // child 
+            close(fd[READ_END]);
+
+            dup2(fd[WRITE_END], STDOUT_FILENO);
+
+            // close(fd[WRITE_END]);
+            recursiveExec(args_child);
+
+        }else if(pid > 0) {
+            // parent
+
+            close(fd[WRITE_END]);
+
+            wait(NULL);
+
+            dup2(fd[READ_END], STDIN_FILENO);
+
+        }else{
+            printf("%s", "Error in forking child");
+            return -1;
+        }
+    }
+    fflush(stdout);
+
+    execvp(args_parent[0], args_parent);
+
+}
 
 int execute(char * args[], int switches[], void * extras[])
 {
@@ -141,7 +209,8 @@ int execute(char * args[], int switches[], void * extras[])
             }
         }
 
-        execvp(args[0], args);
+        if(DEBUG == 1) printf("%s", "calling recursive\n");
+        int retcode = recursiveExec(args);
     }else if(pid > 0){
         //parent
 
